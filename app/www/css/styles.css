@@ -1,0 +1,14 @@
+.payment-col {
+  display: flex;
+  justify-content: space-between;
+  flex-direction: row-reverse;
+}
+
+.invoice-paid {
+  background: hsl(116, 60%, 90%);
+  color: hsl(116, 30%, 25%);
+  padding: 0.125rem 0.75rem;
+  border-radius: 15px;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
