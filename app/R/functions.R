@@ -1,6 +1,12 @@
 library(tidyverse)
 library(lubridate)
 
+xgb_mod <- 
+    readr::read_rds('trained_models/xgboost_racing_tuned.rds')
+
+glm_mod <-
+    readr::read_rds('trained_models/lasso_penalty_tuned.rds')
+
 get_telco_data <- function(raw = FALSE) {
     data <- readr::read_csv('data/WA_Fn-UseC_-Telco-Customer-Churn.csv')
     
@@ -14,7 +20,8 @@ get_telco_data <- function(raw = FALSE) {
 }
 
 parse_telco_data <- function(.data) {
-    .data %>%
+    parsed_data <-
+        .data %>%
         mutate(
             across(
                 c(
@@ -37,7 +44,10 @@ parse_telco_data <- function(.data) {
                                        0 ~ 'No',
                                        .default = 'No')
         ) %>%
-        na.omit()
+        select(-gender) %>%
+        mutate(across(where(is.character), as.factor),
+               customerID = as.character(customerID))
+    
 }
 
 random_id <- function() {
@@ -86,8 +96,12 @@ reframeProducts <-
         )
     }
 
-data <-
-    get_telco_data() %>%
-    filter(customerID == "0434-CSFON")
-
-data <- calc_customer_tenure_stats(test$tenure, test$TotalCharges)
+# data <-
+#     get_telco_data() %>%
+#     filter(customerID == "5248-YGIJN")
+# 
+# tenure_stats <- calc_customer_tenure_stats(data$tenure, data$TotalCharges)
+# 
+# products <- renderProductList(data)
+# 
+# predict(xgb_mod,data[1,], type = "prob")

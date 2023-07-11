@@ -4,6 +4,7 @@ library(htmltools)
 library(thematic)
 library(reactable)
 library(shinyWidgets)
+library(tidymodels)
 
 # AVERAGE CAC TELCO $315
 

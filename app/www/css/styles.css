@@ -12,3 +12,11 @@
   font-weight: 600;
   font-size: 0.75rem;
 }
+
+.invoice-paid::after {
+  content: "USD";
+  position: absolute;
+  padding-left: 20px;
+  font-size: 1.2em;
+  display: inline-block;
+}

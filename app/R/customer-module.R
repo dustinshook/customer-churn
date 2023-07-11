@@ -51,7 +51,24 @@ customerServer <- function(id) {
               filter(customerID == input$cust_search)
       })
       
-      
+      output$cust_products_tbl <-
+          renderReactable({
+              reactable(
+                  renderProductList(
+                      pickedCustomer()
+                  ),
+                  
+                  columns = list(
+                      name = colDef(
+                          name = "PRODUCT"
+                      ),
+                      
+                      value = colDef(
+                          name = "STATUS"
+                      )
+                  )
+              )
+          })
       
       output$cust_payments_tbl <-
           renderReactable({
@@ -89,8 +106,6 @@ customerServer <- function(id) {
                   defaultColDef = colDef(vAlign = "center", headerVAlign = "bottom")
               )
           })
-      
-      
     }
   )
 }

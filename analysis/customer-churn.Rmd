@@ -21,11 +21,105 @@ knitr::opts_chunk$set(
 library(tidymodels)
 library(tidyverse)
 library(GGally)
+library(reactable)
+library(htmltools)
 
-raw_data <- readr::read_csv('data/WA_Fn-UseC_-Telco-Customer-Churn.csv')
+raw_data <- readr::read_csv('../data/WA_Fn-UseC_-Telco-Customer-Churn.csv') %>% 
+    mutate(
+        SeniorCitizen = case_match(
+            SeniorCitizen,
+            1 ~ 'Yes',
+            0 ~ 'No',
+            .default = 'No'
+        )
+    )
+
+data_def <- readr::read_csv('../data/data-def.csv')
+
+data_def_reactable <- function(data, raw_data) {
+    
+    data_skim <-
+        skimr::skim(raw_data) %>% 
+        select(starts_with("skim")) %>% 
+        left_join(data, join_by(skim_variable == column)) %>% 
+        relocate(skim_variable)
+    
+    reactable(
+        data_skim,
+        striped = T,
+        highlight = T,
+        bordered = T,
+        wrap = F,
+        pagination = F,
+        height = 600,
+        defaultColDef = colDef(vAlign = "center"),
+        
+        columns = list(
+            skim_variable = colDef(
+                name = "Column",
+                filterable = T,
+                cell = function(value, idx) {
+                    type <- data_skim$skim_type[idx]
+                    
+                    div(
+                        div(style = "font-weight: 600", value),
+                        div(style = "font-size: 1.2rem; font-style: italic;", type)
+                    )
+                    
+                }
+            ),
+            
+            skim_type = colDef(
+              name = "Type",
+              show = FALSE
+            ),
+            
+            def = colDef(
+                name = "Definition",
+                filterable = T
+            )
+        ),
+        
+        details = function(index) {
+            if (index == 1) return()
+            col_name <- data_skim$skim_variable[index]
+            
+            if (is.numeric(raw_data[[col_name]])) {
+                probs = c(0.25, 0.5, 0.75)
+                
+                nested_tbl <-
+                    tibble(
+                        !!col_name := quantile(raw_data[[col_name]], probs, na.rm = T),
+                        n = probs
+                    )
+            } else {
+                nested_tbl <- 
+                    count(raw_data, pick(col_name))
+            }
+            
+            htmltools::div(style = "padding: 1.5rem",
+                reactable(
+                    nested_tbl,
+                    outlined = T,
+                    striped = T,
+                    highlight = T,
+                    bordered = T,
+                    
+                    columns = list(
+                        n = colDef(
+                            format = colFormat(separators = T)
+                        )
+                    )
+                )
+            )
+        }
+    )
+}
 ```
 
 # Objectives
+
+------------------------------------------------------------------------
 
 Explore Telco customer churn with a data set from [Kaggle](https://www.kaggle.com/datasets/blastchar/telco-customer-churn)
 
@@ -34,11 +128,25 @@ Explore Telco customer churn with a data set from [Kaggle](https://www.kaggle.co
 -   Customer Segmentation with `kmeans()` and `umap()`
 -   Modeling: `tidymodels` framework.
 
+# Data Definitions
+
+------------------------------------------------------------------------
+
+```{r Data Definitions}
+
+data_def_reactable(data_def, raw_data)
+
+```
+
 # Exploratory Data Analysis
+
+------------------------------------------------------------------------
 
 ## Step 1 - Initial look
 
-We'll start by using the `skimr` package to get a feel for a data set. Over all this data set is pretty clean and shouldn't require a ton of cleansing.
+------------------------------------------------------------------------
+
+We'll start by using the [`skimr`](https://docs.ropensci.org/skimr/) package to get a feel for our data. This data set is pretty clean and shouldn't require a ton of cleansing.
 
 ```{r General EDA}
 skimr::skim(raw_data)
@@ -50,14 +158,17 @@ Our target variable `Churn` is distributed reasonably and we don't appear to hav
 
 ```{r Target Variable Churn}
 raw_data %>% 
-    count(Churn)
+    count(Churn) %>% 
+    reactable()
 ```
 
 ## Step 2 - Numeric Variables
 
-Let's now turn our focus to the numeric predictors. We can use the package `GGally` to explore relationships in our data.
+------------------------------------------------------------------------
 
-I notice right away that our `SeniorCitizen` column is being classified as a numeric value instead of a factor, so let's remove it from our data before plotting our numeric predictors. We'll add a feature engineering step for this later.
+Let's now turn our focus to the numeric predictors. We can use the package [`GGally`](https://ggobi.github.io/ggally/) to explore relationships in our data.
+
+In the figure below, we can see that all of our numeric predictors `MonthlyCharges`, `TotalCharges` and `tenure` are correlated with each other with the highest correlation between `tenure` / `TotalCharges`
 
 ```{r Numeric Predictor EDA, message=FALSE, warning=FALSE}
 raw_data %>% 
@@ -77,18 +188,12 @@ raw_data %>%
 
 ## Step 3 - Categorical Variables
 
-In this step, I'll add in the `SeniorCitizen` column by quickly encoding it to the same format as our other categorical columns with `case_match` for consistency.
+------------------------------------------------------------------------
+
+Let's take a closer look at our qualitative variables. First we'll select our outcome variable `Churn` and all of our character columns. We also explicitly remove customer ID due to it being unique for every customer.
 
 ```{r Categorical Predictor EDA, fig.height=8, fig.width=8, message=FALSE, warning=FALSE}
 raw_data %>% 
-    mutate(
-        SeniorCitizen = case_match(
-            SeniorCitizen,
-            1 ~ 'Yes',
-            0 ~ 'No',
-            .default = 'No'
-        )
-    ) %>% 
     select(Churn, where(is.character), -customerID) %>% 
     pivot_longer(!Churn) %>%
     ggplot(aes(y = value, fill = Churn)) +
@@ -127,15 +232,15 @@ parsed_data <-
         ),
         # do the same for the multi phone lines column for consistency
         MultipleLines = if_else(MultipleLines == 'No phone service', 'No', MultipleLines),
-        # re code the Senior Citizen column for consistency
-        SeniorCitizen = case_match(
-            SeniorCitizen,
-            1 ~ 'Yes',
-            0 ~ 'No',
-            .default = 'No'
-        )
+        # customers who have yet to make their first payment have a tenure of zero
+        tenure = if_else(tenure == 0, 1, tenure),
+        # these 0 tenure customers also have an NA for total charges
+        # for our purposes we will assume everyone has made at least 1 monthly payment
+        TotalCharges = if_else(is.na(TotalCharges), MonthlyCharges, TotalCharges)
     ) %>% 
-    na.omit()
+    relocate(where(is.numeric), .after = last_col())
+
+reactable(parsed_data, wrap = F)
 ```
 
 ### Second look
@@ -163,14 +268,28 @@ parsed_data %>%
 
 # Customer Segmentation
 
-## Step 1 - Data preperation
+------------------------------------------------------------------------
 
-We'll start our segmentation by creating a 2D representation of our 18 predictor variables with `umap()`, but first we need to get our data in the correct format by turning our categorical variables into numeric and scaling our numeric variables. We'll also remove `gender`, `customerID`, and our target variable `Churn`
+## Step 1 - Data preparation
+
+------------------------------------------------------------------------
+
+We'll start our segmentation by creating a 2D representation of our 18 predictor variables with `umap()`, but first we need to get our data in the correct format.
+
+-   Drop our target variable `Churn`
+
+-   Center & Scale numeric columns
+
+-   Convert characters to factors
+
+-   Confirm `customerID` remains a character data type
+
+-   Convert factors to numeric
 
 ```{r Umap data preperation}
 kmeans_data <-
     parsed_data %>% 
-    select(-gender, -Churn) %>%
+    select(-Churn) %>%
     mutate(
         across(where(is.numeric), ~ as.numeric(scale(.))),
         across(where(is.character), ~ as.factor(.)),
@@ -181,9 +300,11 @@ kmeans_data <-
 
 ## Step 2 - Generate UMAP 2D Projection
 
+------------------------------------------------------------------------
+
 Next, with the data properly formatted we can generate a two dimensional representation from our many predictor variables.
 
-```{r message=FALSE, warning=FALSE}
+```{r Umap Projection, message=FALSE, warning=FALSE}
 library(umap)
 
 churn_umap <- 
@@ -212,9 +333,11 @@ churn_umap_tbl %>%
 
 ## Step 3 - K-Means Clustering
 
+------------------------------------------------------------------------
+
 Now we'll turn our focus to `kmeans()` and choosing the correct value for k (centers). We'll do this by creating a different cluster object for each value of k 2:7
 
-```{r}
+```{r Kmeans clustering}
 cluster_analysis <-
     # create a tibble with values k 2:7
     tibble(k = 2:7) %>% 
@@ -253,11 +376,11 @@ augment_clust %>%
     theme_dark()
 ```
 
-### Skree Plot
+### Scree Plot
 
-With the information we have thus far, 3 or 4 seems like the best value for k. Let's try another approach with a Skree plot and see if we gain anymore insight.
+With the information we have thus far, 3 or 4 seems like the best value for k. Let's try another approach with a Scree plot and see if we gain anymore insight.
 
-```{r}
+```{r Kmeans scree plot}
 glance_clust %>%
   ggplot(aes(k, tot.withinss)) +
   geom_line(alpha = 0.6, size = 1.5, color = "#FFFFB3") +
@@ -272,9 +395,9 @@ glance_clust %>%
 
 ### Determine Best Value for K
 
-Judging by our Skree plot the constant rate of change appears linear after `k = 3`, although one could argue that 4 may be the best solution.
+Judging by our Scree plot the constant rate of change appears linear after `k = 3`, although one could argue that 4 may be the best solution.
 
-```{r}
+```{r Finalize kmeans center}
 churn_clust_final <- kmeans(
     select(churn_umap_tbl, -customerID), 
     centers = 3
@@ -285,9 +408,11 @@ glance(churn_clust_final)
 
 ## Step 4 - Visualize Customer Segmentation
 
+------------------------------------------------------------------------
+
 Let's go back to our visualization and see if we can draw anymore insights now with the proper k value.
 
-```{r}
+```{r Vis churn by cluster}
 augment(churn_clust_final, parsed_data) %>% 
     select(Churn, .cluster) %>% 
     pivot_longer(!Churn) %>%
@@ -306,30 +431,19 @@ augment(churn_clust_final, parsed_data) %>%
     theme_dark() 
 ```
 
-### Wrapping up
-
-Not bad, we have created a way to segment our customer data into 3 different categories - low, medium, and highest chance at customer churn. Let's now move on to model building.
-
 # Model Building
+
+------------------------------------------------------------------------
 
 ## Step 1 - Data Prep
 
-### Feature Removal
+------------------------------------------------------------------------
 
-First things first, we need to prepare our data. I am making the decision to remove the gender variable from our data. It's nearly a perfect split between male/female churn so I don't believe it adds any significance to our objective.
+The majority of data preprocessing steps we will handle later using the [`recipes`](https://recipes.tidymodels.org/ "Tidymodels - recipes") package. For now, we'll simply confirm that characters variables are converted to factors. We are going to use `customerID` as an ID variable instead of removing it, so we need to make sure it remains a character. Let's also take one final `glimpse()` before we move on
 
-```{r}
-parsed_data %>% 
-    count(gender, Churn) %>% 
-    mutate(prop = n/sum(n))
-```
-
-The majority of data preprocessing steps we will handle later using the `recipes` package. For now, we'll simply remove the `gender` column and confirm that characters variables are converted to factors. We are going to use `customerID` as an ID variable instead of removing it, so we need to make sure it remains a character. Let's also take one final `glimpse()` before we move on
-
-```{r}
+```{r Model data prep}
 churn_df <-
     parsed_data %>% 
-    select(-gender) %>%
     mutate(
         across(where(is.character), as.factor),
         customerID = as.character(customerID)
@@ -340,9 +454,9 @@ glimpse(churn_df)
 
 ### Training & Testing Split
 
-It's time to split our data into our training and testing sets. To be safe, we're going to stratify our randomly sampled data sets by `Churn` even though it's not terribly imbalanced.
+It's time to split our data into our training and testing sets. For good measure, we are also going to stratify our randomly sampled data sets by `Churn`.
 
-```{r}
+```{r Initial split}
 set.seed(1234)
 churn_split <- initial_split(churn_df, strata = Churn)
 churn_train <- training(churn_split)
@@ -353,117 +467,63 @@ churn_test <- testing(churn_split)
 
 We also set up our cross-validation sets with the same stratification.
 
-```{r}
+```{r Cross validation}
 set.seed(567)
 churn_folds <- vfold_cv(churn_train, strata = Churn)
 ```
 
-## Step 2 - First Model Specification
+### Model Specification
 
-### Logistic Regression - Lasso
+Instead of deciding on a single model ourselves, instead we'll utilize the [`tidymodels`](https://www.tidymodels.org/) frame-work to screen many different model types.
 
-Our first model we'll try is a lasso model with a logistic regression from the `parsnip` package. Notice we set our penalty to `tune()`, we'll utilize our `churn_folds` to find a balance between the best numerically performing model a simpler model with less predictors.
+Notice we are specifying some of the model parameters as `tune()` instead of a static value. This tags the parameter to be optimized later.
 
-```{r}
-lasso_glm <- 
-     parsnip::logistic_reg(
-        penalty = tune(),
-        mixture = 1
+```{r Model Spec}
+library(discrim)
+library(parsnip)
+
+mars_spec <- 
+    discrim_flexible(
+        prod_degree = tune()
     ) %>% 
-    set_engine("glmnet")
-```
+    set_engine("earth") 
 
-## Step 3 - Data Pre-Processing w/ Recipes
+glm_spec <- 
+     logistic_reg(
+        penalty = tune(),
+        mixture = tune()
+    ) %>% 
+    set_engine("glmnet") %>% 
+    set_mode("classification")
 
-As mentioned previously, the bulk of our preprocessing steps are handled using a `recipe`
-
--   `update_role()` `customerID` column is only for ID purposes and will not be included
--   `step_dummy()` Convert all of our factor columns to binary
--   `step_normalize()` Center and scale all numeric columns
--   `step_zv()` Removes any variables that contain a single value
-
-```{r}
-churn_recipe <-
-    recipe(Churn ~ ., data = churn_train) %>% 
-    update_role(customerID, new_role = 'id') %>% 
-    step_dummy(all_nominal_predictors()) %>% 
-    step_normalize(all_numeric_predictors()) %>% 
-    step_zv(all_predictors())
-
-churn_recipe
-```
-
-## Step 4 - Tune Model Parameters
-
-We start our lasso regularization with `tune_grid()` by tuning the penalty parameter. As the penalty is set higher - the model will remove under preforming predictor variables.
-
-```{r}
-lasso_workflow <- workflow(churn_recipe, lasso_glm)
-
-doParallel::registerDoParallel()
-
-set.seed(789)
-lasso_grid <- tune_grid(
-    lasso_workflow,
-    resamples = churn_folds,
-    grid = grid_regular(penalty(), levels = 100)
-)
-```
-
-## Step 5 - Evaluate Results
-
-Our `lasso_grid` is now tuned and ready for further analysis. Using `roc_auc` as our grading metric, we can visualize which models performed similarly during training even with a higher penalty value.
-
-```{r}
-lasso_grid %>% 
-    collect_metrics() %>% 
-    ggplot(aes(penalty, mean, color = .metric)) +
-    geom_point(color = "black") +
-    geom_line(size = 1.5, alpha = 0.5) +
-    facet_wrap(~.metric, scales = "free", nrow = 2) +
-    scale_x_log10(labels = scales::label_number()) +
-    theme(legend.position = "bottom") +
-    scale_fill_brewer(palette = "Set3") +
-    theme_dark() 
-```
+knn_spec <- 
+   nearest_neighbor(
+       neighbors = tune(), 
+       dist_power = tune(), 
+       weight_func = tune()
+   ) %>% 
+   set_engine("kknn") %>% 
+   set_mode("classification")
 
 
-### Choosing From our Candidate Models
+svm_spec <-
+    svm_rbf(
+        cost = tune(),
+        rbf_sigma = tune(),
+        margin = tune()
+    ) %>% 
+    set_engine("kernlab") %>% 
+    set_mode("classification")
 
-Next we utilize `select_by_one_std_err()` to choose from our grid of potential model parameters. This function allows us to choose a simpler model (if available) if its performance is within one standard error of a more complicated yet higher performing model.
+rf_spec <- 
+   rand_forest(
+       mtry = tune(), 
+       min_n = tune(), 
+       trees = 1000
+   ) %>% 
+   set_engine("ranger") %>% 
+   set_mode("classification")
 
-As you can see in the visual above, this analysis proves that a ***MUCH*** simpler model can be used to achieve a similar result.
-
-```{r}
-best_lasso <- select_by_one_std_err(
-    lasso_grid, 
-    metric = "roc_auc", 
-    desc(penalty)
-)
-
-best_lasso
-```
-
-## Step 6 - Final Fit
-
-It's time to finalize our model with our hold-out data, the metrics displayed below are our final results for this model.
-
-```{r}
-lasso_final_fit <- lasso_workflow %>% 
-    finalize_workflow(best_lasso) %>% 
-    last_fit(churn_split)
-
-lasso_final_fit %>% 
-    collect_metrics()
-```
-
-## Step 7 - Second Model Specification
-
-### XGBoost
-
-Now let's move on to our next model specification `xgboost`, notice we are tuning 3 different parameters with this powerful tree based model.
-
-```{r}
 xgb_spec <-
     boost_tree(
         trees = tune(),
@@ -471,15 +531,390 @@ xgb_spec <-
         mtry = tune(),
         learn_rate = 0.01
     ) %>% 
+    set_engine("xgboost") %>% 
+    set_mode("classification")
+```
+
+## Step 3 - Data Pre-Processing w/ Recipes
+
+------------------------------------------------------------------------
+
+As mentioned previously, the bulk of our preprocessing steps are handled using [`recipes`](https://recipes.tidymodels.org/ "Tidymodels - recipes"), below is a brief overview of the functions we'll use to process our data.
+
+-   `update_role()` `customerID` column is only for ID purposes and will not be included
+-   `step_dummy()` Convert factor columns to binary
+-   `step_YeoJohnson()` normalize distribution
+-   `step_normalize()` Center and scale numeric columns
+-   `step_poly()` creates new predictors using orthogonal polynomials.
+
+We'll create 3 different recipe objects, each with varying levels of preprocessing steps. This will allow us to cater towards the requirements of each potential candidate model.
+
+-   `churn_recipe_base` minimal, we establish our outcome variable and convert our factor columns
+-   `churn_recipe_norm` normalize, center, and scale our predictors
+-   `churn_recipe_poly` transform our numeric predictors to add stability and avoid multicollinearity
+
+```{r Recipes preproc}
+# minimal pre_proc 
+churn_recipe_base <-
+    recipe(Churn ~ ., data = churn_train) %>% 
+    update_role(customerID, new_role = 'id') %>% 
+    step_dummy(all_nominal_predictors())
+
+# normalization
+churn_recipe_norm <-
+    churn_recipe_base %>% 
+    step_YeoJohnson(all_numeric_predictors()) %>% 
+    step_normalize(all_numeric_predictors())
+
+# quadratic
+churn_recipe_poly <- 
+    churn_recipe_norm %>% 
+    step_poly(tenure, MonthlyCharges, TotalCharges)
+```
+
+### Workflow sets
+
+Next, we'll utilize the [`workflowsets`](https://workflowsets.tidymodels.org/reference/index.html "Tidymodels - workflowsets") package to help us combine our candidate models with the appropriate recipes and preprocessors.
+
+```{r Workflow Setup}
+minimal_pre_proc <-
+    workflow_set(
+        preproc = list(
+            base_recipe = churn_recipe_base # minimal pre_proc 
+        ),
+        models = list(
+            MARS = mars_spec, # Multivariate Adaptive Regression Splines (MARS)
+            RF   = rf_spec,   # Random Forest
+            XGB  = xgb_spec   # XGBoost
+        )
+    )
+
+poly_pre_proc <- 
+    workflow_set(
+        preproc = list(
+            quad = churn_recipe_poly # quadratic
+        ),
+        models = list(
+            GLM = glm_spec, # GLM
+            KNN = knn_spec  # k-nearest neighbors
+        )
+    )
+
+normalized_pre_proc <-
+    workflow_set(
+        preproc = list(
+            normal = churn_recipe_norm # normalization
+        ),
+        models = list(
+            SVM = svm_spec, # support vector machine
+            KNN = knn_spec, # k-nearest neighbors
+            GLM = glm_spec  # GLM
+        )
+    )
+
+all_workflows <-
+    bind_rows( # combine them all into a single workflows object
+        minimal_pre_proc,
+        poly_pre_proc,
+        normalized_pre_proc
+    ) 
+
+
+all_workflows
+```
+
+## Step 4 - Fine Tune Model Parameters
+
+------------------------------------------------------------------------
+
+During our model specification, we established model parameters with the `tune()` argument instead of setting a static value. We'll use racing methods from the `finetune` package to optimize these values.
+
+[`tune_race_anova()`](https://finetune.tidymodels.org/reference/tune_race_anova.html) from the `finetune` package will eliminate combinations of different tuned model parameters that are not performing well using an `ANOVA` model. This will leave us with the best performing values as our final model parameters.
+
+```{r Tune model params}
+library(finetune)
+library(workflowsets)
+library(doParallel)
+library(tictoc)
+
+cl <- makePSOCKcluster(
+    detectCores(logical = T) - 2
+)  
+
+registerDoParallel(cl)
+
+race_control <-
+    control_race(
+        save_pred = TRUE,
+        parallel_over = "everything",
+        save_workflow = TRUE
+    )
+
+race_results <-
+    all_workflows %>% 
+    workflow_map(
+        "tune_race_anova",
+        seed = 1345,
+        resamples = churn_folds,
+        grid = 25,
+        metrics = metric_set(roc_auc),
+        control = race_control
+    )
+
+race_results
+```
+
+## Step 5 - Evaluate results
+
+------------------------------------------------------------------------
+
+The convenience function `autoplot` will help us visualize our best performing model from each workflow now that the grid search is finished.
+
+As you can see, all of our models performed pretty well - with a slight edge going to the GLM models.
+
+```{r Model eval}
+autoplot(
+   race_results,
+   rank_metric = "roc_auc",
+   metric = "roc_auc",
+   select_best = TRUE    
+) +
+   geom_text(aes(label = wflow_id), angle = 0, hjust = 1.5) +
+   lims(y = c(0.7, 0.9)) +
+    coord_flip() +
+   theme(legend.position = "none")  
+```
+
+## Step - 6 Final fit
+
+------------------------------------------------------------------------
+
+From here, we could simply choose the best performing model and parameter combination. Instead, we are going to choose 1 model from each of our different recipe types.
+
+To do this, I'll create a function that will extract the best performing metrics from our grid search and apply those parameters to fit the data on the test set. All we need to do now is decide which models we want and then `map()` them as the first argument into our function. I've decided to keep the `quad_GLM`, `base_recipe_XGB`, and the `normal_SVM` models.
+
+```{r Final fit}
+select_and_finalize_models <- function(model, metric, data_split, race_results) {
+    best_model <-
+        race_results %>% 
+        extract_workflow_set_result(model) %>% 
+        select_best(metric = metric)
+    
+    final_fit <-
+        race_results %>% 
+        extract_workflow(model) %>% 
+        finalize_workflow(best_model) %>% 
+        last_fit(split = data_split)
+}
+
+final_fit_list <-
+    c(
+        "quad_GLM", 
+        "base_recipe_XGB", 
+        "normal_SVM"
+    ) %>% 
+    set_names() %>% 
+    map(
+        ~ select_and_finalize_models(
+            .x, 
+            "roc_auc", 
+            churn_split, 
+            race_results
+        )
+    )
+
+rm(race_results) # remove the race_results object
+```
+
+### Model Performance
+
+We now have 3 finalized model workflows. Here's how each of them preformed on our test set
+
+```{r Final model metrics tbl}
+final_fit_list %>% 
+    imap(function(x, name) {
+        collect_metrics(x) %>% 
+            mutate(model = name)
+    }) %>% 
+    bind_rows() %>% 
+    relocate(model) %>% 
+    reactable(
+        searchable = T,
+        wrap = F,
+        columns = list(
+            .estimate = colDef(format = colFormat(percent = T, digits = 2))
+        )
+    )
+```
+
+We can also visualize all of our models together on a Receiver operator curve.
+
+```{r Area under the curve}
+final_fit_list %>% 
+    imap(function(x, name) {
+        collect_predictions(x) %>% 
+            group_by(id) %>% 
+            roc_curve(Churn, .pred_No) %>% 
+            mutate(model = name)
+    }) %>% 
+    bind_rows() %>%
+    ggplot(aes(x = 1 - specificity, y = sensitivity, col = model)) +
+    geom_abline(slope = 1, color = "gray50", lty = 2, alpha = 0.8) +
+    geom_path(size = 1.5, alpha = 0.7) +
+    labs(color = NULL) +
+    coord_equal() +
+    labs(
+        title = "Final Predictions - Area Under the Curve"
+    )
+```
+
+Let's see how our model preformed with a confusion matrix.
+
+```{r Conf Matrix}
+final_fit_list %>% 
+    pluck('quad_GLM') %>%
+    collect_predictions() %>% 
+    conf_mat(Churn, .pred_class) %>% 
+    autoplot(type = "heatmap")
+```
+
+### Variable Importance
+
+Using the package `vip` we can also gain valuable insight into which variables were most important to our boosted tree model.
+
+```{r Variable Importance}
+library(vip)
+
+final_fit_list %>% 
+    pluck('base_recipe_XGB')%>% 
+    extract_fit_engine() %>% 
+    vip(20) 
+```
+
+## Notes
+
+------------------------------------------------------------------------
+
+Finally we'll save these models to be used later in our Shiny application. We'll write another quick function that `walk()`'s over our `final_fit_list` and uses the model name to create a path for saving the rds file with the `readr` package.
+
+```{r Save model rds}
+
+extract_wf_save_rds <- function(model, name) {
+    path = str_glue("../app/trained_models/{name}.rds")
+    readr::write_rds(extract_workflow(model), path)
+}
+
+final_fit_list %>% 
+    iwalk(extract_wf_save_rds)
+```
+
+# Bonus Model
+
+------------------------------------------------------------------------
+
+As a bonus step, Let's try a Dimensional Reduction technique from the package `FactoMineR`. This particular reduction technique is designed for a data set containing both quantitative and qualitative variables.
+
+```{r FAMD Bonus}
+library(FactoMineR)
+library(factoextra)
+
+famd_churn <- 
+    parsed_data %>% 
+    select(-customerID, -Churn) %>%
+    mutate(
+        across(where(is.numeric), ~ as.numeric(scale(.))),
+        across(where(is.character), ~ as.factor(.))
+    ) 
+
+res.famd <- FAMD(famd_churn, graph = F)
+
+res.famd
+```
+
+Much like our own dimensional reduction analysis earlier, we can use the package `factoextra`'s helper functions to create a Scree plot displaying the variance explained by each dimension.
+
+```{r FAMD scree}
+fviz_screeplot(res.famd)
+```
+
+4 dimensions seems to be where the constant rate of change levels out. Let's visualize the variable importance across the first 4 dimensions.
+
+```{r FAMD VIP, fig.height=8, fig.width=8}
+as.data.frame(res.famd$var$contrib[, 1:4]) %>% 
+    rownames_to_column("term") %>% 
+    pivot_longer(!term, names_to = "dimension", values_to = "contribution") %>% 
+    mutate(term = term %>% as.factor() %>% fct_reorder(contribution)) %>% 
+    ggplot(aes(x = term, y = contribution, fill = term)) +
+    geom_bar(stat = "identity") +
+    facet_wrap(~ dimension, scales = "free") +
+    coord_flip() +
+    theme_dark() 
+```
+
+I can't help but wonder if we can improve our modeling accuracy using this dimension reduction as a preproccessing step. So let's try it!
+
+```{r FAMD preproc}
+# DIMENSIONALY REDUCED
+churn_famd_df <-
+    churn_df %>%
+    mutate(
+        across(where(is.numeric), ~ as.numeric(scale(.)))
+    ) %>%
+    select(-customerID, -Churn) %>%
+    FAMD(., graph = F, ncp = 4) %>%
+    get_famd(.) %>%
+    pluck('coord') %>%
+    as_tibble() %>%
+    mutate(
+        customerID = pull(churn_df, customerID),
+        Churn = pull(churn_df, Churn)
+    ) %>%
+    rename_with(~gsub("Dim.", "FAMD_", .x, fixed = T))
+
+reactable(
+    relocate(churn_famd_df, customerID, Churn) %>% 
+        head(), 
+    defaultColDef = colDef(
+        format = colFormat(
+            digits = 2
+        )
+    )
+)
+```
+
+We'll use `xgboost` for this last model and preform similar model setup steps as we did before.
+
+```{r last model set up}
+set.seed(1234)
+churn_famd_split <- initial_split(churn_famd_df, strata = Churn)
+churn_famd_train <- training(churn_famd_split)
+churn_famd_test <- testing(churn_famd_split)
+
+set.seed(567)
+churn_famd_folds <- vfold_cv(churn_famd_train, strata = Churn)
+
+xgb_famd_spec <-
+    boost_tree(
+        trees = tune(),
+        min_n = tune(),
+        learn_rate = tune(),
+        loss_reduction = tune(),
+        sample_size = tune(),
+        mtry = tune()
+    ) %>% 
     set_engine('xgboost') %>% 
     set_mode('classification')
 
-xgb_workflow <- workflow(churn_recipe, xgb_spec)
+famd_recipe <-
+    recipe(Churn ~ ., data = churn_famd_train) %>% 
+    update_role(customerID, new_role = 'id') 
+
+xgb_famd_wf <- workflow(famd_recipe, xgb_famd_spec)
+
+xgb_famd_wf
 ```
 
-## Step 8 - Fine Tune Model Params
-
-[`tune_race_anova()`](https://finetune.tidymodels.org/reference/tune_race_anova.html) from the `finetune` package will eliminate combinations of different parameters that are not performing well using an `ANOVA` model. These methods are a fast an efficient way to handle grid search.
+time to tune!
 
 ```{r}
 doParallel::registerDoParallel()
@@ -488,94 +923,52 @@ set.seed(891)
 
 library(finetune)
 
-xgb_rs <- tune_race_anova(
-    xgb_workflow,
-    resamples = churn_folds,
-    grid = 15,
+xgb_famd_rs <- tune_race_anova(
+    xgb_famd_wf,
+    resamples = churn_famd_folds,
+    grid = 20,
     metrics = metric_set(roc_auc),
     control = control_race(verbose_elim = T)
 )
 
-xgb_rs
+collect_metrics(xgb_famd_rs) %>% 
+    reactable(wrap = F)
 ```
 
-### Evaluate Results
-
-`collect_metrics()` allows us to review the results of the grid search
+plot the racing results
 
 ```{r}
-collect_metrics(xgb_rs)
+plot_race(xgb_famd_rs)
 ```
 
-### Visualize the Results 
-
-We can also visualize this with `plot_race()`
+It doesn't appear we have added anything meaningful to our model by including this reduction. However, it was worth exploring.
 
 ```{r}
-plot_race(xgb_rs)
+xgb_famd_final_fit <- xgb_famd_wf %>% 
+    finalize_workflow(select_best(xgb_famd_rs, "roc_auc")) %>% 
+    last_fit(churn_famd_split)
+
+collect_metrics(xgb_famd_final_fit) %>% 
+    select(-.config) %>% 
+    reactable()
 ```
 
-## Step 9 - Choose and Finalize Fit
-
-We select our best numerically preforming model based on `roc_auc` and finalize our model workflow. The metrics displayed are the final metrics obtained from our testing set.
+Confusion Matrix
 
 ```{r}
-xgb_final_fit <- xgb_workflow %>% 
-    finalize_workflow(select_best(xgb_rs, "roc_auc")) %>% 
-    last_fit(churn_split)
-
-collect_metrics(xgb_final_fit)
-```
-
-## Step 10 - Evaluate Final Preformance
-
-Let's see how our model preformed with a confusion matrix.
-
-```{r}
-collect_predictions(xgb_final_fit) %>% 
+collect_predictions(xgb_famd_final_fit) %>% 
     conf_mat(Churn, .pred_class) %>% 
-    autoplot()
+    autoplot(type = "heatmap")
 ```
 
-### Variable Importance
-
-Using the package `vip` we can also gain valuable insight into which variables were most important to our model. It's no surprise that around 10 predictors had little to no significance in model performance after arriving at a high penalty value in our lasso model.
+Variable Importance: refer back to the previous visualization to see what contributes most to each of the 5 dimensions
 
 ```{r}
 library(vip)
 
-xgb_final_fit %>% 
+xgb_famd_final_fit %>% 
     extract_fit_engine() %>% 
-    vip(20) 
+    vip()
 ```
 
-### Compare Both Models
-
-Let's compare our two models performance side by side
-
-```{r}
-xgb_final_fit %>%
-  collect_predictions() %>% 
-  roc_curve(Churn, .pred_No) %>% 
-    mutate(.model = "XGBOOST") %>% 
-    bind_rows(
-        lasso_final_fit %>% 
-            collect_predictions() %>% 
-            roc_curve(Churn, .pred_No) %>% 
-            mutate(.model = "LASSO")
-    ) %>%
-  ggplot(aes(x = 1 - specificity, y = sensitivity, col = .model)) +
-  geom_abline(slope = 1, color = "gray50", lty = 2, alpha = 0.8) +
-  geom_path(size = 1.5, alpha = 0.7) +
-  labs(color = NULL) +
-  coord_equal()
-```
-
-## Notes
-
-Finally we'll save these models to be used later in our Shiny application.
-
-```{r}
-readr::write_rds(extract_workflow(xgb_final_fit), 'app/trained_models/xgboost_racing_tuned.rds')
-readr::write_rds(extract_workflow(lasso_final_fit), 'app/trained_models/lasso_penalty_tuned.rds')
-```
+------------------------------------------------------------------------
